@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rucio-mcp"
+version = "0.1.0"
+description = "MCP server exposing read-only Rucio tools"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Archi Team" }]
+dependencies = [
+  "mcp>=1.0.0",
+  "rucio-clients",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+rucio-mcp = "rucio_mcp.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
