@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from typing import Any
 
@@ -11,7 +12,9 @@ from .service import RucioService
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("rucio-mcp")
+_host = os.environ.get("RUCIO_MCP_HOST", "0.0.0.0")
+_port = int(os.environ.get("RUCIO_MCP_PORT", "8000"))
+mcp = FastMCP("rucio-mcp", host=_host, port=_port)
 service = RucioService(client_factory=create_rucio_client)
 
 
@@ -134,14 +137,18 @@ def rucio_get_replication_rule(rule_id: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    # MCP protocol messages must go to stdout; logs must go to stderr.
+    # Logs go to stderr; stdio transport uses stdout for protocol messages.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
         stream=sys.stderr,
     )
-    logger.info("Starting rucio-mcp server over stdio")
-    mcp.run(transport="stdio")
+    transport = os.environ.get("RUCIO_MCP_TRANSPORT", "stdio")
+    if transport == "streamable-http":
+        logger.info("Starting rucio-mcp server over streamable-http on %s:%s", _host, _port)
+    else:
+        logger.info("Starting rucio-mcp server over %s", transport)
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
