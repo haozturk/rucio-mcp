@@ -2,17 +2,26 @@
 set -euo pipefail
 
 : "${X509_USER_PROXY:=/tmp/x509up}"
-: "${VOMS:=cms}"
+# VOMS attribute extension is OFF by default. Enable by setting VOMS=cms (or
+# another VO) — note this requires network access to the VOMS server and the
+# corresponding IGTF trust anchors + vomses/vomsdir metadata to be available
+# inside the image. Basic RFC proxies (no VOMS) are sufficient for Rucio
+# x509_proxy auth in most deployments.
+: "${VOMS:=}"
 : "${VOMS_VALID:=192:00}"
 : "${PROXY_REFRESH_SECONDS:=21600}"
 GLOBUS_DIR="${GLOBUS_DIR:-/root/.globus}"
 
 init_proxy() {
-    voms-proxy-init -rfc -valid "$VOMS_VALID" -voms "$VOMS" \
-        -cert "$GLOBUS_DIR/usercert.pem" \
-        -key  "$GLOBUS_DIR/userkey.pem" \
-        -out  "$X509_USER_PROXY" \
-        --pwstdin < /dev/null
+    local args=(-rfc -valid "$VOMS_VALID"
+                -cert "$GLOBUS_DIR/usercert.pem"
+                -key  "$GLOBUS_DIR/userkey.pem"
+                -out  "$X509_USER_PROXY"
+                --pwstdin)
+    if [[ -n "$VOMS" ]]; then
+        args+=(-voms "$VOMS")
+    fi
+    voms-proxy-init "${args[@]}" < /dev/null
 }
 
 # Three modes:
