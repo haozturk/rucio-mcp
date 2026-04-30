@@ -3,7 +3,16 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       voms-clients-java \
       ca-certificates \
+      igtf-policy-classic \
  && rm -rf /var/lib/apt/lists/*
+
+# CMS VOMS configuration: vomses describes the VOMS servers, vomsdir/*.lsc
+# lists the expected VOMS server + issuing CA DNs. These are public CMS metadata.
+# IGTF trust anchors (including the CERN Grid CA that signs CMS user certs)
+# come from the igtf-policy-classic package above, populating
+# /etc/grid-security/certificates.
+COPY docker/vomses/ /etc/vomses/
+COPY docker/vomsdir/ /etc/grid-security/vomsdir/
 
 WORKDIR /app
 COPY pyproject.toml ./
