@@ -128,3 +128,32 @@ def test_rule_methods() -> None:
 
     assert out1["count"] == 1
     assert out2["data"]["id"] == "rule-1"
+
+
+class LimitsClient:
+    """get_rse_limits as the Rucio client really answers it: one {name: value} dict."""
+
+    def __init__(self, result: Any) -> None:
+        self.result = result
+
+    def get_rse_limits(self, **kwargs):
+        return self.result
+
+
+def test_get_rse_limits_keeps_names_and_values_from_the_dict_the_client_returns() -> None:
+    client = LimitsClient({"MinFreeSpace": 10000000000000, "MaxBeingDeletedFiles": 1000})
+    out = RucioService(client_factory=lambda: client).get_rse_limits(rse="T2_TEST")
+
+    assert out["status"] == "ok" and out["count"] == 2 and out["truncated"] is False
+    assert out["items"] == [
+        {"name": "MinFreeSpace", "value": 10000000000000},
+        {"name": "MaxBeingDeletedFiles", "value": 1000},
+    ]
+
+
+def test_get_rse_limits_still_accepts_an_iterator_and_applies_the_limit() -> None:
+    rows = [{"name": f"L{i}", "value": i} for i in range(3)]
+    client = LimitsClient(iter(rows))
+    out = RucioService(client_factory=lambda: client).get_rse_limits(rse="T2_TEST", limit=2)
+
+    assert out["items"] == rows[:2] and out["truncated"] is True

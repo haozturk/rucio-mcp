@@ -204,8 +204,12 @@ class RucioService:
 
     def get_rse_limits(self, rse: str, limit: int = 200) -> dict[str, Any]:
         limit = _clamp_limit(limit)
-        cursor = self._client().get_rse_limits(rse=rse)
-        items, truncated = _collect(cursor, limit)
+        result = self._client().get_rse_limits(rse=rse)
+        # The Rucio client returns one {name: value} dict here (the first JSON document of the
+        # reply), although its docstring says iterator. Iterating that dict keeps only the names.
+        if isinstance(result, dict):
+            result = ({"name": name, "value": value} for name, value in result.items())
+        items, truncated = _collect(result, limit)
         return _ok_items(items, truncated)
 
     def list_rse_attributes(self, rse: str) -> dict[str, Any]:
