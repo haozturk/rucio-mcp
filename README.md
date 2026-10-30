@@ -80,6 +80,7 @@ Selected via `RUCIO_MCP_TRANSPORT`:
 | `RUCIO_MCP_TRANSPORT` | `stdio` (image overrides to `streamable-http`) | Wire transport. |
 | `RUCIO_MCP_HOST` | `0.0.0.0` | Bind address (HTTP only). |
 | `RUCIO_MCP_PORT` | `8000` | Bind port (HTTP only). |
+| `RUCIO_MCP_THREADS` | `8` | Most tool calls run at once; each runs in a worker thread, the rest wait. |
 
 ### X509 proxy lifecycle (Docker only)
 

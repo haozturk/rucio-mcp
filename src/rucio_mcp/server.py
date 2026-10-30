@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import sys
 from typing import Any
 
+import anyio
+import anyio.to_thread
 from mcp.server.fastmcp import FastMCP
 
 from .client import create_rucio_client
@@ -18,19 +21,52 @@ mcp = FastMCP("rucio-mcp", host=_host, port=_port)
 service = RucioService(client_factory=create_rucio_client)
 
 
+# Run each blocking Rucio tool in a worker thread so one slow Rucio query
+# does not freeze the event loop for every other client.
+# At most RUCIO_MCP_THREADS (default 8) tool calls run at once; the rest queue.
+# No shared client: RucioService builds a new rucio Client for every call.
+_limiter: anyio.CapacityLimiter | None = None
+
+
+def _get_limiter() -> anyio.CapacityLimiter:
+    global _limiter
+    if _limiter is None:
+        _limiter = anyio.CapacityLimiter(int(os.environ.get("RUCIO_MCP_THREADS", "8")))
+    return _limiter
+
+
+def _threaded_tool(fn: Any) -> Any:
+    """Wrap a sync tool as an async tool that runs it in a worker thread.
+
+    functools.wraps keeps the name, docstring, annotations and (through
+    __wrapped__) the signature, so FastMCP builds the same tool schema.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await anyio.to_thread.run_sync(
+            functools.partial(fn, *args, **kwargs), limiter=_get_limiter()
+        )
+
+    return wrapper
+
+
 @mcp.tool()
+@_threaded_tool
 def rucio_ping() -> dict[str, Any]:
     """Ping Rucio and return basic server information."""
     return service.ping()
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_whoami() -> dict[str, Any]:
     """Return account information for the active auth token."""
     return service.whoami()
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_dids(
     scope: str,
     name_pattern: str = "*",
@@ -51,12 +87,14 @@ def rucio_list_dids(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_did(scope: str, name: str, dynamic_depth: str | None = None) -> dict[str, Any]:
     """Get a single DID by scope and name."""
     return service.get_did(scope=scope, name=name, dynamic_depth=dynamic_depth)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_replicas(
     dids: list[dict[str, str]],
     schemes: list[str] | None = None,
@@ -79,6 +117,7 @@ def rucio_list_replicas(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_rses(rse_expression: str | None = None, limit: int = 200) -> dict[str, Any]:
     """List RSEs, optionally filtered by an RSE expression.
 
@@ -102,12 +141,14 @@ def rucio_list_rses(rse_expression: str | None = None, limit: int = 200) -> dict
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_rse(rse: str) -> dict[str, Any]:
     """Get details for a single RSE."""
     return service.get_rse(rse=rse)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_requests(
     src_rse: str,
     dst_rse: str,
@@ -124,6 +165,7 @@ def rucio_list_requests(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_requests_history(
     src_rse: str,
     dst_rse: str,
@@ -142,12 +184,14 @@ def rucio_list_requests_history(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_replication_rules(filters: dict[str, Any] | None = None, limit: int = 200) -> dict[str, Any]:
     """List replication rules using optional filters."""
     return service.list_replication_rules(filters=filters, limit=limit)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_replication_rule(rule_id: str) -> dict[str, Any]:
     """Get one replication rule by id."""
     return service.get_replication_rule(rule_id=rule_id)
@@ -157,6 +201,7 @@ def rucio_get_replication_rule(rule_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_content(scope: str, name: str, limit: int = 200) -> dict[str, Any]:
     """List the children of a dataset or container DID.
 
@@ -167,6 +212,7 @@ def rucio_list_content(scope: str, name: str, limit: int = 200) -> dict[str, Any
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_parent_dids(scope: str, name: str, limit: int = 200) -> dict[str, Any]:
     """List the parent DIDs that contain a given DID.
 
@@ -177,6 +223,7 @@ def rucio_list_parent_dids(scope: str, name: str, limit: int = 200) -> dict[str,
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_metadata(scope: str, name: str, plugin: str = "DID_COLUMN") -> dict[str, Any]:
     """Get metadata for a DID.
 
@@ -187,6 +234,7 @@ def rucio_get_metadata(scope: str, name: str, plugin: str = "DID_COLUMN") -> dic
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_dataset_replicas(
     scope: str, name: str, deep: bool = False, limit: int = 200
 ) -> dict[str, Any]:
@@ -199,6 +247,7 @@ def rucio_list_dataset_replicas(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_did_rules(scope: str, name: str, limit: int = 200) -> dict[str, Any]:
     """List replication rules that apply to a specific DID.
 
@@ -212,6 +261,7 @@ def rucio_list_did_rules(scope: str, name: str, limit: int = 200) -> dict[str, A
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_rse_usage(
     rse: str, filters: dict[str, Any] | None = None, limit: int = 200
 ) -> dict[str, Any]:
@@ -224,12 +274,14 @@ def rucio_get_rse_usage(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_rse_limits(rse: str, limit: int = 200) -> dict[str, Any]:
     """Get the configured space limits for an RSE (e.g., min_free_space)."""
     return service.get_rse_limits(rse=rse, limit=limit)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_rse_attributes(rse: str) -> dict[str, Any]:
     """Get the custom attributes of an RSE.
 
@@ -240,12 +292,14 @@ def rucio_list_rse_attributes(rse: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_rse_protocols(rse: str) -> dict[str, Any]:
     """Get the transfer protocols supported by an RSE (gsiftp, davs, root, etc.)."""
     return service.get_rse_protocols(rse=rse)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_distance(source: str, destination: str) -> dict[str, Any]:
     """Get the configured network distance from one RSE to another.
 
@@ -255,6 +309,7 @@ def rucio_get_distance(source: str, destination: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_transfer_limits(limit: int = 200) -> dict[str, Any]:
     """List transfer limit policies (concurrency caps and waiting limits per RSE).
 
@@ -268,6 +323,7 @@ def rucio_list_transfer_limits(limit: int = 200) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_accounts(
     account_type: str | None = None,
     identity: str | None = None,
@@ -285,12 +341,14 @@ def rucio_list_accounts(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_account(account: str) -> dict[str, Any]:
     """Get details for a single account (status, email, type, created_at, etc.)."""
     return service.get_account(account=account)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_local_account_usage(
     account: str, rse: str | None = None, limit: int = 200
 ) -> dict[str, Any]:
@@ -303,12 +361,14 @@ def rucio_get_local_account_usage(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_local_account_limits(account: str) -> dict[str, Any]:
     """Get per-RSE quota limits for an account."""
     return service.get_local_account_limits(account=account)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_account_rules(account: str, limit: int = 200) -> dict[str, Any]:
     """List replication rules owned by an account."""
     return service.list_account_rules(account=account, limit=limit)
@@ -318,6 +378,7 @@ def rucio_list_account_rules(account: str, limit: int = 200) -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_subscriptions(
     name: str | None = None, account: str | None = None, limit: int = 200
 ) -> dict[str, Any]:
@@ -330,6 +391,7 @@ def rucio_list_subscriptions(
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_subscription_rules(account: str, name: str, limit: int = 200) -> dict[str, Any]:
     """List replication rules produced by a specific subscription.
 
@@ -342,12 +404,14 @@ def rucio_list_subscription_rules(account: str, name: str, limit: int = 200) -> 
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_dataset_locks(scope: str, name: str, limit: int = 200) -> dict[str, Any]:
     """List locks on a dataset (which rules keep its replicas pinned and where)."""
     return service.get_dataset_locks(scope=scope, name=name, limit=limit)
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_get_dataset_locks_by_rse(rse: str, limit: int = 200) -> dict[str, Any]:
     """List all dataset locks at a given RSE. Answers "what's locked on this site."""
     return service.get_dataset_locks_by_rse(rse=rse, limit=limit)
@@ -357,6 +421,7 @@ def rucio_get_dataset_locks_by_rse(rse: str, limit: int = 200) -> dict[str, Any]
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_scopes() -> dict[str, Any]:
     """List all scopes on the Rucio instance.
 
@@ -366,6 +431,7 @@ def rucio_list_scopes() -> dict[str, Any]:
 
 
 @mcp.tool()
+@_threaded_tool
 def rucio_list_scopes_for_account(account: str) -> dict[str, Any]:
     """List scopes that a specific account can write to."""
     return service.list_scopes_for_account(account=account)
